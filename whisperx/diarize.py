@@ -3,11 +3,13 @@ import pandas as pd
 from pyannote.audio import Pipeline
 from typing import Optional, Union, List, Tuple
 import torch
+import tempfile
+import soundfile as sf
 
 from whisperx.audio import load_audio, SAMPLE_RATE
 from whisperx.schema import TranscriptionResult, AlignedTranscriptionResult
 from whisperx.log_utils import get_logger
-
+from nemo_diarization import NemoDiarization
 logger = get_logger(__name__)
 
 
@@ -96,11 +98,17 @@ class DiarizationPipeline:
         device: Optional[Union[str, torch.device]] = "cpu",
         cache_dir=None,
     ):
+        self.model = None
+        self.nemo_diarizer = None
+
         if isinstance(device, str):
             device = torch.device(device)
         model_config = model_name or "pyannote/speaker-diarization-community-1"
         logger.info(f"Loading diarization model: {model_config}")
-        self.model = Pipeline.from_pretrained(model_config, token=token, cache_dir=cache_dir).to(device)
+        if "pyannote" in model_config.lower():
+            self.model = Pipeline.from_pretrained(model_config, token=token, cache_dir=cache_dir).to(device)
+        elif "nemo" in model_config.lower():
+            self.nemo_diarizer = NemoDiarization()
 
     def __call__(
         self,
@@ -128,35 +136,62 @@ class DiarizationPipeline:
         """
         if isinstance(audio, str):
             audio = load_audio(audio)
+
         audio_data = {
             'waveform': torch.from_numpy(audio[None, :]),
             'sample_rate': SAMPLE_RATE
         }
 
-        output = self.model(
-            audio_data,
-            num_speakers=num_speakers,
-            min_speakers=min_speakers,
-            max_speakers=max_speakers,
-        )
+        if self.model is not None:
+            output = self.model(
+                audio_data,
+                num_speakers=num_speakers,
+                min_speakers=min_speakers,
+                max_speakers=max_speakers,
+            )
 
-        diarization = output.speaker_diarization
-        embeddings = output.speaker_embeddings if return_embeddings else None
+            diarization = output.speaker_diarization
+            embeddings = output.speaker_embeddings if return_embeddings else None
 
-        diarize_df = pd.DataFrame(diarization.itertracks(yield_label=True), columns=['segment', 'label', 'speaker'])
-        diarize_df['start'] = diarize_df['segment'].apply(lambda x: x.start)
-        diarize_df['end'] = diarize_df['segment'].apply(lambda x: x.end)
+            diarize_df = pd.DataFrame(diarization.itertracks(yield_label=True), columns=['segment', 'label', 'speaker'])
+            diarize_df['start'] = diarize_df['segment'].apply(lambda x: x.start)
+            diarize_df['end'] = diarize_df['segment'].apply(lambda x: x.end)
 
-        if return_embeddings and embeddings is not None:
-            speaker_embeddings = {speaker: embeddings[s].tolist() for s, speaker in enumerate(diarization.labels())}
-            return diarize_df, speaker_embeddings
-        
-        # For backwards compatibility
-        if return_embeddings:
-            return diarize_df, None
+            if return_embeddings and embeddings is not None:
+                speaker_embeddings = {speaker: embeddings[s].tolist() for s, speaker in enumerate(diarization.labels())}
+                return diarize_df, speaker_embeddings
+
+            # For backwards compatibility
+            if return_embeddings:
+                return diarize_df, None
+            else:
+                return diarize_df
         else:
-            return diarize_df
+            # NEMO CONFIG FIELDS
+            diarize_df = self.nemo_diarizer(
+                audio_filepath=save_waveform_to_file(self.nemo_diarizer.output_dir, audio_data),
+                num_speakers=num_speakers
+            )
+        return diarize_df
 
+
+def save_waveform_to_file(directory, audio_data: dict) -> str:
+
+    waveform = audio_data['waveform']
+
+    if waveform.ndim == 2 and waveform.shape[0] == 1:
+        waveform = waveform[0]
+
+    waveform_np = waveform.cpu().numpy().astype('float32')
+    sr = audio_data['sample_rate']
+
+    tmp_file = tempfile.NamedTemporaryFile(dir=directory, suffix=".wav", delete=False)
+    tmp_path = tmp_file.name
+    tmp_file.close()
+
+    sf.write(tmp_path, waveform_np, sr)
+
+    return tmp_path
 
 def assign_word_speakers(
     diarize_df: pd.DataFrame,
