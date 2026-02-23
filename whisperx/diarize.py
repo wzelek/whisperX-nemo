@@ -9,9 +9,9 @@ import soundfile as sf
 from whisperx.audio import load_audio, SAMPLE_RATE
 from whisperx.schema import TranscriptionResult, AlignedTranscriptionResult
 from whisperx.log_utils import get_logger
-from nemo_diarization import NemoDiarization
-logger = get_logger(__name__)
+from whisperx.nemo_diarization import NemoDiarization
 
+logger = get_logger(__name__)
 
 class IntervalTree:
     """
