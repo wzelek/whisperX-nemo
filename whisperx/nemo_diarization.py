@@ -61,7 +61,7 @@ class NemoDiarization:
             / "diar_infer_general.yaml"
         )
 
-        config_path = os.getenv("NVIDIA_NEMO_CONFIG", str(default_config))
+        config_path = os.getenv("CUSTOM_NVIDIA_NEMO_CONFIG", str(default_config))
         self.config = OmegaConf.load(config_path)
 
     def _configure_model(self, manifest_path: Path) -> None:
