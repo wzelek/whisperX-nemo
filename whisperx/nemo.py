@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Tuple, Any
 
 import pandas as pd
-from nemo.collections.asr.models import ClusteringDiarizer
+from nemo.collections.asr.models import ClusteringDiarizer, NeuralDiarizer
 from omegaconf import OmegaConf
 from pandas import DataFrame
 
@@ -47,7 +47,7 @@ def rttm_to_dataframe(rttm_content: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-class NemoDiarization:
+class Diarization:
     def __init__(self):
         self._tmpdir = tempfile.TemporaryDirectory()
         self.output_dir = Path(self._tmpdir.name)
@@ -64,12 +64,20 @@ class NemoDiarization:
     def _configure_model(self, manifest_path: Path) -> None:
         diarizer_cfg = self.config.diarizer
         diarizer_cfg.manifest_filepath = str(manifest_path)
-        diarizer_cfg.vad.model_path = os.getenv(
-            "CUSTOM_VAD_MODEL_PATH", "vad_multilingual_marblenet"
-        )
-        diarizer_cfg.speaker_embeddings.model_path = os.getenv(
-            "CUSTOM_SPEAKER_EMBEDDINGS_MODEL_PATH", "titanet_large"
-        )
+
+        if diarizer_cfg.vad.model_path:
+            diarizer_cfg.vad.model_path = os.getenv(
+                "CUSTOM_VAD_MODEL_PATH", diarizer_cfg.vad.model_path
+            )
+        if diarizer_cfg.speaker_embeddings.model_path:
+            diarizer_cfg.speaker_embeddings.model_path = os.getenv(
+                "CUSTOM_SPEAKER_EMBEDDINGS_MODEL_PATH", diarizer_cfg.speaker_embeddings.model_path
+            )
+        if diarizer_cfg.msdd_model.model_path:
+            diarizer_cfg.msdd_model.model_path = os.getenv(
+                "CUSTOM_MSDD_MODEL_PATH", diarizer_cfg.msdd_model.model_path
+            )
+
         diarizer_cfg.out_dir = str(self.output_dir)
 
     def __call__(self, **extra_fields: Any) -> DataFrame:
@@ -86,7 +94,13 @@ class NemoDiarization:
         manifest_path = self._create_manifest(**extra_fields)
         self._configure_model(manifest_path)
 
-        model = ClusteringDiarizer(cfg=self.config)
+        if self.config.diarizer.vad.model_path and not self.config.diarizer.msdd_model.model_path:
+            model = ClusteringDiarizer(cfg=self.config)
+        elif self.config.diarizer.msdd_model.model_path:
+            model = NeuralDiarizer(cfg=self.config)
+        else:
+            raise Exception("Missing diarizer model path")
+
         model.diarize()
 
         rttm_content = self._get_generated_rttm_path(audio_path).read_text()

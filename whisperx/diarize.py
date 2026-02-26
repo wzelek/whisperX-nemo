@@ -9,7 +9,7 @@ import soundfile as sf
 from whisperx.audio import load_audio, SAMPLE_RATE
 from whisperx.schema import TranscriptionResult, AlignedTranscriptionResult
 from whisperx.log_utils import get_logger
-from whisperx.nemo_diarization import NemoDiarization
+from whisperx.nemo import Diarization
 
 logger = get_logger(__name__)
 
@@ -108,7 +108,7 @@ class DiarizationPipeline:
         if "pyannote" in model_config.lower():
             self.model = Pipeline.from_pretrained(model_config, token=token, cache_dir=cache_dir).to(device)
         elif "nemo" in model_config.lower():
-            self.nemo_diarizer = NemoDiarization()
+            self.nemo_diarizer = Diarization()
 
     def __call__(
         self,
